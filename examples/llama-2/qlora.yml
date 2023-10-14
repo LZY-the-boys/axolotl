@@ -1,5 +1,5 @@
-base_model: NousResearch/Llama-2-7b-hf
-base_model_config: NousResearch/Llama-2-7b-hf
+base_model: /model/Llama-2-13b-hf
+base_model_config: /model/Llama-2-13b-hf
 model_type: LlamaForCausalLM
 tokenizer_type: LlamaTokenizer
 is_llama_derived_model: true
@@ -9,7 +9,7 @@ load_in_4bit: true
 strict: false
 
 datasets:
-  - path: mhenrichsen/alpaca_2k_test
+  - path: /home/lzy/exp/exp-done/guanaco-lima-dolly.json
     type: alpaca
 dataset_prepared_path:
 val_set_size: 0.01

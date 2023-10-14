@@ -180,6 +180,26 @@ def load_model(
         LOG.info("patching with flash attention")
         replace_mistral_attn_with_flash_attn(packed=cfg.sample_packing)
 
+    if cfg.is_llama_derived_model and cfg.noisy_embedding_alpha:
+        from axolotl.monkeypatch.llama_embeddings_hijack import (
+            replace_llama_embeddings_with_uniform_distribution,
+        )
+
+        LOG.info("patching with noisy embeddings")
+        replace_llama_embeddings_with_uniform_distribution(
+            noise_alpha=cfg.noisy_embedding_alpha
+        )
+
+    if cfg.is_mistral_derived_model and cfg.noisy_embedding_alpha:
+        from axolotl.monkeypatch.mistral_embeddings_hijack import (
+            replace_mistral_embeddings_with_uniform_distribution,
+        )
+
+        LOG.info("patching with noisy embeddings")
+        replace_mistral_embeddings_with_uniform_distribution(
+            noise_alpha=cfg.noisy_embedding_alpha
+        )
+
     if cfg.is_llama_derived_model and cfg.xpos_rope:
         from axolotl.monkeypatch.xpos_rope_llama_monkey_patch import (
             replace_llama_rope_with_xpos_rope,
@@ -282,6 +302,14 @@ def load_model(
             from axolotl.models.phi import MixFormerSequentialForCausalLM
 
             model = MixFormerSequentialForCausalLM.from_pretrained(
+                base_model,
+                load_in_8bit=cfg.load_in_8bit and cfg.adapter is not None,
+                load_in_4bit=cfg.load_in_4bit and cfg.adapter is not None,
+                **model_kwargs,
+            )
+        elif model_type == 'qwen':
+            from axolotl.models.qwen.qwen_hijack import QWenLMHeadModel
+            model = QWenLMHeadModel.from_pretrained(
                 base_model,
                 load_in_8bit=cfg.load_in_8bit and cfg.adapter is not None,
                 load_in_4bit=cfg.load_in_4bit and cfg.adapter is not None,
@@ -403,12 +431,20 @@ def load_model(
     if needs_fa2_dtype or (cfg.flash_attention and cfg.is_llama_derived_model):
         LOG.info("converting modules to %s for flash attention", cfg.torch_dtype)
         for name, module in model.named_modules():
-            if "norm" in name:
-                module.to(cfg.torch_dtype)
-            if "lm_head" in name or "embed_tokens" in name:
-                if hasattr(module, "weight"):
+            if 'qwen' == cfg.model_type:
+                if "ln_1" in name or 'ln_2' in name or 'ln_f' in name:
                     module.to(cfg.torch_dtype)
-
+                if "lm_head" in name or "wte" in name:
+                    if hasattr(module, "weight"):
+                        module.to(cfg.torch_dtype)                
+            else:
+                if "norm" in name:
+                    module.to(cfg.torch_dtype)
+                if "lm_head" in name or "embed_tokens" in name:
+                    if hasattr(module, "weight"):
+                        module.to(cfg.torch_dtype)
+    # checkfor dytpe
+    LOG.info([ (n,p.dtype) for n,p in model.named_parameters() ])
     model, lora_config = load_adapter(model, cfg, cfg.adapter)
 
     if cfg.ddp and not load_in_8bit:
