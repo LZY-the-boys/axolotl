@@ -10,7 +10,7 @@ datasets:
   - path: /home/lzy/exp/exp-done/guanaco-lima-dolly.json
     type: alpaca
 dataset_prepared_path:
-val_set_size: 0.01
+val_set_size: 0
 output_dir: ./qlora-out
 
 adapter: qlora
@@ -54,8 +54,8 @@ logging_steps: 1
 xformers_attention:
 flash_attention: true
 
-warmup_steps: 10
-eval_steps: 20
+warmup_steps: 
+eval_steps: 
 eval_table_size:
 save_steps:
 debug:
