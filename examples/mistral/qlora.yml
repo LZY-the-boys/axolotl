@@ -18,9 +18,9 @@ output_dir: ./outs/mistral-with-guanaco
 adapter: qlora
 lora_model_dir:
 
-sequence_len: 4096
-sample_packing: True
-pad_to_sequence_len: True
+sequence_len: 8192
+sample_packing: true
+pad_to_sequence_len: true
 
 lora_r: 32
 lora_alpha: 16
@@ -44,9 +44,8 @@ wandb_log_model:
 
 gradient_accumulation_steps: 4
 micro_batch_size: 2
-num_epochs: 3
-# optimizer: adamw_bnb_8bit
-optimizer: adamw_hf
+num_epochs: 1
+optimizer: adamw_bnb_8bit
 lr_scheduler: cosine
 learning_rate: 0.0002
 
