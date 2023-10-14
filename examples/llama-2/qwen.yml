@@ -1,9 +1,7 @@
-base_model: /model/Llama-2-13b-hf
-base_model_config: /model/Llama-2-13b-hf
-model_type: LlamaForCausalLM
-tokenizer_type: LlamaTokenizer
-is_llama_derived_model: true
-
+base_model: Qwen/Qwen-14B
+base_model_config: Qwen/Qwen-14B
+is_llama_derived_model: false
+model_type: qwen
 load_in_8bit: false
 load_in_4bit: true
 strict: false
@@ -36,7 +34,7 @@ wandb_run_id:
 wandb_log_model:
 
 gradient_accumulation_steps: 4
-micro_batch_size: 2
+micro_batch_size: 1
 num_epochs: 3
 optimizer: paged_adamw_32bit
 lr_scheduler: cosine
@@ -66,6 +64,5 @@ weight_decay: 0.0
 fsdp:
 fsdp_config:
 special_tokens:
-  bos_token: "<s>"
-  eos_token: "</s>"
-  unk_token: "<unk>"
+  eos_token: '<|endoftext|>'
+  pad_token: '<|endoftext|>'

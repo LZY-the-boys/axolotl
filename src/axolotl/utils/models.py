@@ -287,6 +287,14 @@ def load_model(
                 load_in_4bit=cfg.load_in_4bit and cfg.adapter is not None,
                 **model_kwargs,
             )
+        elif model_type == 'qwen':
+            from axolotl.models.qwen.qwen_hijack import QWenLMHeadModel
+            model = QWenLMHeadModel.from_pretrained(
+                base_model,
+                load_in_8bit=cfg.load_in_8bit and cfg.adapter is not None,
+                load_in_4bit=cfg.load_in_4bit and cfg.adapter is not None,
+                **model_kwargs,
+            )
         elif model_type and not cfg.trust_remote_code:
             if cfg.gptq:
                 model = AutoModelForCausalLM.from_pretrained(
@@ -403,12 +411,20 @@ def load_model(
     if needs_fa2_dtype or (cfg.flash_attention and cfg.is_llama_derived_model):
         LOG.info("converting modules to %s for flash attention", cfg.torch_dtype)
         for name, module in model.named_modules():
-            if "norm" in name:
-                module.to(cfg.torch_dtype)
-            if "lm_head" in name or "embed_tokens" in name:
-                if hasattr(module, "weight"):
+            if 'qwen' == cfg.model_type:
+                if "ln_1" in name or 'ln_2' in name or 'ln_f' in name:
                     module.to(cfg.torch_dtype)
-
+                if "lm_head" in name or "wte" in name:
+                    if hasattr(module, "weight"):
+                        module.to(cfg.torch_dtype)                
+            else:
+                if "norm" in name:
+                    module.to(cfg.torch_dtype)
+                if "lm_head" in name or "embed_tokens" in name:
+                    if hasattr(module, "weight"):
+                        module.to(cfg.torch_dtype)
+    # checkfor dytpe
+    LOG.info([ (n,p.dtype) for n,p in model.named_parameters() ])
     model, lora_config = load_adapter(model, cfg, cfg.adapter)
 
     if cfg.ddp and not load_in_8bit:
