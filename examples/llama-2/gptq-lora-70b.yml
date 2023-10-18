@@ -1,0 +1,71 @@
+base_model: /data/models/Llama-2-70B-GPTQ-3bit-1g
+base_model_config: /data/models/Llama-2-70B-GPTQ-3bit-1g
+is_llama_derived_model: true
+gptq: true
+gptq_disable_exllama: true
+model_type: AutoModelForCausalLM
+tokenizer_type: LlamaTokenizer
+tokenizer_use_fast: true
+tokenizer_legacy: true
+load_in_8bit: false
+load_in_4bit: false
+strict: false
+push_dataset_to_hub:
+hf_use_auth_token: true
+datasets:
+  - path: /home/ubuntu/lzy/exp-data/arb_mcat.json
+    type: alpaca
+dataset_prepared_path:
+val_set_size: 0
+adapter: lora
+lora_model_dir:
+sequence_len: 2048
+sample_packing: True
+lora_r: 4
+lora_alpha: 8
+lora_dropout: 0.05
+lora_target_modules:
+lora_target_linear: true
+pad_to_sequence_len: true
+lora_fan_in_fan_out:
+wandb_project:
+wandb_watch:
+wandb_run_id:
+wandb_log_model:
+output_dir: /data/outs/70b_lora
+gradient_accumulation_steps: 1
+micro_batch_size: 1
+num_epochs: 3
+optimizer: adamw_8bit
+adam_beta2: 0.95
+adam_eps: 0.00001
+max_grad_norm: 1.0
+torchdistx_path:
+lr_scheduler: cosine
+
+learning_rate: 0.000017
+train_on_inputs: false
+group_by_length: false
+bf16: true
+fp16: false
+tf32: false
+
+gradient_checkpointing: true
+early_stopping_patience:
+resume_from_checkpoint:
+local_rank:
+logging_steps: 1
+xformers_attention:
+flash_attention:
+sdp_attention:
+flash_optimum:
+warmup_steps: 0
+eval_steps:
+save_steps:
+debug:
+deepspeed:
+weight_decay: 0.1
+special_tokens:
+  bos_token: "<s>"
+  eos_token: "</s>"
+  unk_token: "<unk>"
