@@ -1,6 +1,8 @@
 **/axolotl.egg-info
 configs
 outs
+*.sh
+submit
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

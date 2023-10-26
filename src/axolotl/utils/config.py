@@ -301,6 +301,17 @@ def validate_config(cfg):
                 )
 
     if cfg.datasets:
+        # hack 
+        if isinstance(cfg.datasets, str):
+            from axolotl.utils.dict import DictDefault
+            if ';' in cfg.datasets:
+                data_path = cfg.datasets.split(';')[0]
+                data_type = cfg.datasets.split(';')[1]
+            else:
+                data_path = cfg.datasets
+                data_type = 'alpaca'
+            cfg.datasets = [DictDefault({'path':data_path, 'type':data_type })]
+            
         for idx, ds_cfg in enumerate(cfg.datasets):
             if not ds_cfg.type:
                 continue
