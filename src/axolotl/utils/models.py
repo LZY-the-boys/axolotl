@@ -404,15 +404,16 @@ def load_model(
         log_gpu_memory_usage(LOG, "after model load", model.device)
 
     # make sure these are fp32 per Ramesh et al. (2021)
-    for name, module in model.named_modules():
-        if "norm" in name:
-            module.to(torch.float32)
-        if model_config.model_type == "btlm":
-            # don't upcast lm_head for btlm
-            continue
-        if "lm_head" in name or "embed_tokens" in name:
-            if hasattr(module, "weight"):
+    if 'qwen' != cfg.model_type:
+        for name, module in model.named_modules():
+            if "norm" in name:
                 module.to(torch.float32)
+            if model_config.model_type == "btlm":
+                # don't upcast lm_head for btlm
+                continue
+            if "lm_head" in name or "embed_tokens" in name:
+                if hasattr(module, "weight"):
+                    module.to(torch.float32)
 
     needs_fa2_dtype = cfg.adapter or cfg.fsdp
     if (cfg.adapter == "lora" and load_in_8bit) or (
@@ -488,6 +489,8 @@ def load_adapter(model, cfg, adapter, inference=False):
         model.enable_input_require_grads()
     if adapter in ["lora", "qlora"]:
         return load_lora(model, cfg, inference=inference)
+    if adapter == "llora":
+        return load_llora(model, cfg, inference=inference)
     if adapter == "llama-adapter":
         return load_llama_adapter(model, cfg)
 
@@ -569,3 +572,51 @@ def load_lora(model, cfg, inference=False):
     model.print_trainable_parameters()
 
     return model, lora_config
+
+def load_llora(model, cfg, inference=False):
+    # type: (PreTrainedModel, DictDefault, bool) -> Tuple[PreTrainedModel, Optional[PeftConfig]]
+
+    from peft import LoraConfig, PeftModel, get_peft_model
+    from peft.utils.peft_types import PeftType
+    setattr(PeftType, "LLORA", "LLORA")
+    from peft.peft_model import PEFT_TYPE_TO_MODEL_MAPPING
+    from axolotl.utils.llora import LLoraConfig, LLoraModel
+    PEFT_TYPE_TO_MODEL_MAPPING.update({PeftType.LLORA: LLoraModel})
+    
+    lora_target_modules = list(cfg.lora_target_modules or [])
+
+    if cfg.lora_target_linear:
+        linear_names = find_all_linear_names(model)
+        LOG.info(f"found linear modules: {repr(linear_names)}")
+        lora_target_modules = list(set(lora_target_modules + linear_names))
+
+    llora_config = LLoraConfig(
+        r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        target_modules=lora_target_modules,
+        lora_dropout=cfg.lora_dropout,
+        fan_in_fan_out=cfg.lora_fan_in_fan_out,
+        modules_to_save=cfg.lora_modules_to_save if cfg.lora_modules_to_save else None,
+        bias="none",
+        task_type="CAUSAL_LM",
+        small_model_dim=cfg.small_model_dim,
+        large_model_dim=cfg.large_model_dim,
+        small_model_intermediate_size=cfg.small_model_intermediate_size,
+        large_model_intermediate_size=cfg.large_model_intermediate_size
+    )
+    if cfg.lora_model_dir:
+        LOG.debug("Loading pretained PEFT - LLoRA")
+        model = PeftModel.from_pretrained(
+            model,
+            cfg.lora_model_dir,
+            is_trainable=(not inference),
+        )
+    else:
+        model = get_peft_model(model, llora_config)
+    for k, v in model.named_parameters():
+        if 'small' in k or 's2l' in k:
+            v.requires_grad = False
+            print("freeze {}".format(k))
+    model.print_trainable_parameters()
+
+    return model, llora_config
