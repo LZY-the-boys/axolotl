@@ -579,11 +579,7 @@ def load_llora(model, cfg, inference=False):
     # type: (PreTrainedModel, DictDefault, bool) -> Tuple[PreTrainedModel, Optional[PeftConfig]]
 
     from peft import LoraConfig, PeftModel, get_peft_model
-    from peft.utils.peft_types import PeftType
-    setattr(PeftType, "LLORA", "LLORA")
-    from peft.peft_model import PEFT_TYPE_TO_MODEL_MAPPING
-    from axolotl.models.llora.llora import LLoraConfig, LLoraModel
-    PEFT_TYPE_TO_MODEL_MAPPING.update({PeftType.LLORA: LLoraModel})
+    from peft.tuners.custom.llora import LLoraConfig, LLoraModel
     
     lora_target_modules = list(cfg.lora_target_modules or [])
 
@@ -606,8 +602,9 @@ def load_llora(model, cfg, inference=False):
         small_model_intermediate_size=cfg.small_model_intermediate_size,
         large_model_intermediate_size=cfg.large_model_intermediate_size
     )
+    LOG.debug("Loading pretained PEFT - LLoRA")
+    
     if cfg.lora_model_dir:
-        LOG.debug("Loading pretained PEFT - LLoRA")
         model = PeftModel.from_pretrained(
             model,
             cfg.lora_model_dir,

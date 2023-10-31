@@ -56,6 +56,7 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
             "class": "logging.FileHandler",
             "formatter": "file_simple",  # Choose the appropriate formatter
             "filename": os.getenv("LOG_FILE", "axolotl.log"),  # Specify the file path
+            "mode": "a",
         },
         "color_console": {
             "class": "logging.StreamHandler",
@@ -77,5 +78,7 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
 
 def configure_logging():
     """Configure with default logging"""
+    if os.getenv("LOG_FILE", False):
+        os.makedirs(os.path.dirname(os.getenv("LOG_FILE")), exist_ok=True)
     init()  # Initialize colorama
     dictConfig(DEFAULT_LOGGING_CONFIG)
