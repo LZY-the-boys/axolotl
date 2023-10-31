@@ -3,6 +3,7 @@ from peft.tuners.lora import *
 from dataclasses import asdict, dataclass, field, replace
 from typing import List, Optional, Tuple, Union
 import re
+import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,10 +45,13 @@ class LLoraConfig(LoraConfig):
     large_r:int = field(default=32, metadata={"help": "Large model r"})
     small_model_intermediate_size:int = field(default=11008, metadata={"help": "Small model intermediate size"})
     large_model_intermediate_size:int = field(default=13824, metadata={"help": "Large model intermediate size"})
+    
     def __post_init__(self):
         self.peft_type = PeftType.LLORA
-        
+
+
 class LLoraLayer(LoraLayer):
+
     def __init__(self, large_in_features: int, large_out_features: int, small_in_features: int, small_out_features: int, **kwargs):
         super().__init__(large_in_features, large_out_features, **kwargs)
         self.small_in_features = small_in_features
@@ -78,7 +82,44 @@ class LLoraLayer(LoraLayer):
             self.scaling[adapter_name + "_large"] = lora_alpha / large_r
         if init_lora_weights:
             self.reset_lora_parameters(adapter_name)
-        self.to(self.weight.device)
+        
+        weight = getattr(self, "weight", None)
+        if weight is not None:
+            # for linear
+            # the layer is already completely initialized, this is an update
+            if weight.dtype.is_floating_point or weight.dtype.is_complex:
+                self.to(weight.device, dtype=weight.dtype)
+            else:
+                self.to(weight.device)
+        else:
+            # for 4bit 8bit
+            self.to(self.base_layer.weight.device)
+        
+        self.set_adapter(self.active_adapters)
+
+    def set_adapter(self, adapter_names):
+        """Set the active adapter
+
+        Args:
+            adapter_name (str): The name of the adapter to set as active
+        """
+        if isinstance(adapter_names, str):
+            adapter_names = [adapter_names]
+
+        # Deactivate grads on the inactive adapter and activate grads on the active adapter
+        for layer_name in self.adapter_layer_names:
+            module_dict = getattr(self, layer_name)
+            for key, layer in module_dict.items():
+                # NOTE!!!
+                if key.split('_')[0] in adapter_names:
+                    # Note: It is possible that not a single layer is called with requires_grad_(True) here. This may
+                    # happen if a completely different adapter layer is being activated.
+                    layer.requires_grad_(True)
+                else:
+                    layer.requires_grad_(False)
+
+        self._active_adapter = adapter_names
+
     #unuse
     def update_layer_conv2d(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights):
         self.r[adapter_name] = r
@@ -132,7 +173,8 @@ class LLoraLayer(LoraLayer):
             if full_name in self.lora_A.keys():
                 # initialize A the same way as the default for nn.Linear and B to zero
                 nn.init.kaiming_uniform_(self.lora_A[full_name].weight, a=math.sqrt(5))
-                nn.init.zeros_(self.lora_B[full_name].weight)
+                # nn.init.zeros_(self.lora_B[full_name].weight)
+                nn.init.kaiming_uniform_(self.lora_A[full_name].weight, a=math.sqrt(0.1))
             if full_name in self.lora_embedding_A.keys():
                 # initialize a the same way as the default for nn.linear and b to zero
                 nn.init.zeros_(self.lora_embedding_A[full_name])
@@ -160,7 +202,6 @@ class Linear(nn.Linear, LLoraLayer):
         LLoraLayer.__init__(self, large_in_features=large_in_features, large_out_features=large_out_features, 
                            small_in_features=small_in_features, small_out_features=small_out_features)
         # Freezing the pre-trained weight matrix
-        self.weight.requires_grad = False
 
         self.fan_in_fan_out = fan_in_fan_out
         if fan_in_fan_out:
@@ -168,8 +209,8 @@ class Linear(nn.Linear, LLoraLayer):
 
         nn.Linear.reset_parameters(self)
         self.update_layer(adapter_name, small_r, large_r, lora_alpha, lora_dropout, init_lora_weights)
-        self.active_adapter = adapter_name
         self.is_target_conv_1d_layer = is_target_conv_1d_layer
+        self.set_adapter(adapter_name)
 
     def merge(self):
         if self.active_adapter + "_small" not in self.lora_A.keys() and self.active_adapter + "_large" not in self.lora_A.keys():
@@ -233,15 +274,17 @@ class Linear(nn.Linear, LLoraLayer):
 
         return result
 
+import logging
+LOG = logging.getLogger("axolotl")
+
 if is_bnb_available():
 
-    class Linear8bitLt(bnb.nn.Linear8bitLt, LLoraLayer):
+    class Linear8bitLt(torch.nn.Module, LLoraLayer):
         # Lora implemented in a dense layer
         def __init__(
             self,
             adapter_name,
-            small_in_features: int,
-            small_out_features: int,
+            base_layer,
             large_in_features: int,
             large_out_features: int,
             small_r: int = 0,
@@ -250,71 +293,70 @@ if is_bnb_available():
             lora_dropout: float = 0.0,
             **kwargs,
         ):
-            bnb.nn.Linear8bitLt.__init__(
-                self,
-                small_in_features,
-                small_out_features,
-                bias=kwargs.get("bias", True),
-                has_fp16_weights=kwargs.get("has_fp16_weights", True),
-                memory_efficient_backward=kwargs.get("memory_efficient_backward", False),
-                threshold=kwargs.get("threshold", 0.0),
-                index=kwargs.get("index", None),
+            super().__init__()
+            LLoraLayer.__init__(
+                self, 
+                large_in_features=large_in_features, large_out_features=large_out_features, 
+                small_in_features=base_layer.in_features, small_out_features=base_layer.out_features
             )
-            LLoraLayer.__init__(self, large_in_features=large_in_features, large_out_features=large_out_features, 
-                           small_in_features=small_in_features, small_out_features=small_out_features)
+            self.base_layer = base_layer
 
-            # Freezing the pre-trained weight matrix
-            self.weight.requires_grad = False
             init_lora_weights = kwargs.pop("init_lora_weights", True)
             self.update_layer(adapter_name, small_r, large_r, lora_alpha, lora_dropout, init_lora_weights)
-            self.active_adapter = adapter_name
+            self.set_adapter(adapter_name)
 
-        def forward(self, x: torch.Tensor):
-            result = super().forward(x)
+        def forward(self, x: torch.Tensor, *args, **kwargs):
+            if self.disable_adapters:
+                if self.merged:
+                    self.unmerge()
+                result = self.base_layer(x, *args, **kwargs)
+            elif self.merged:
+                result = self.base_layer(x, *args, **kwargs)
+            else:
+                result = self.base_layer(x, *args, **kwargs)
+                for active_adapter in self.active_adapters:
+                    if active_adapter not in self.lora_A.keys():
+                        continue
 
-            if self.disable_adapters or (self.active_adapter + "_small" not in self.lora_A.keys() and self.active_adapter + "_large" not in self.lora_A.keys()):
-                return result
-            elif self.r[self.active_adapter + "_small"] > 0 and self.r[self.active_adapter + "_large"] > 0:
-                if not torch.is_autocast_enabled():
-                    expected_dtype = result.dtype
-
-                    if x.dtype != torch.float32:
-                        x = x.float()
+                    requires_conversion = not torch.is_autocast_enabled()
+                    if requires_conversion:
+                        expected_dtype = result.dtype
+                        compute_dtype = self.lora_A[active_adapter + "_small"].weight.dtype
+                        if x.dtype != compute_dtype:
+                            x = x.to(compute_dtype)
+                    
                     output = (
-                        self.lora_B[self.active_adapter + "_small"](
-                        self.lora_B[self.active_adapter + "_s2l"](
-                        self.lora_B[self.active_adapter + "_large"](
-                            self.lora_A[self.active_adapter + "_large"](
-                            self.lora_A[self.active_adapter + "_s2l"](
-                            self.lora_A[self.active_adapter + "_small"](self.lora_dropout[self.active_adapter](x))
-                            ))
-                        ))).to(expected_dtype)
-                        *  self.scaling[self.active_adapter + "_large"] #TODO
+                        self.lora_B[active_adapter + "_small"](
+                            self.lora_B[active_adapter + "_s2l"](
+                                self.lora_B[active_adapter + "_large"](
+                                    self.lora_A[active_adapter + "_large"](
+                                        self.lora_A[active_adapter + "_s2l"](
+                                            self.lora_A[active_adapter + "_small"](
+                                                self.lora_dropout[active_adapter](x)
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )  
                     )
-                else:
-                    output = (
-                        self.lora_B[self.active_adapter + "_small"](
-                        self.lora_B[self.active_adapter + "_s2l"](
-                        self.lora_B[self.active_adapter + "_large"](
-                            self.lora_A[self.active_adapter + "_large"](
-                            self.lora_A[self.active_adapter + "_s2l"](
-                            self.lora_A[self.active_adapter + "_small"](self.lora_dropout[self.active_adapter](x))
-                            ))
-                        )))
-                        * self.scaling[self.active_adapter + "_large"] #TODO
-                    )
-                result += output
+
+                    if requires_conversion:
+                        output = output.to(expected_dtype)
+                    
+                    output = output * self.scaling[active_adapter + "_large"] #TODO
+                    result += output
+
             return result
 
     if is_bnb_4bit_available():
 
-        class Linear4bit(bnb.nn.Linear4bit, LLoraLayer):
+        class Linear4bit(torch.nn.Module, LLoraLayer):
             # Lora implemented in a dense layer
             def __init__(
                 self,
                 adapter_name,
-                small_in_features: int,
-                small_out_features: int,
+                base_layer,
                 large_in_features: int,
                 large_out_features: int,
                 small_r: int = 0,
@@ -323,61 +365,69 @@ if is_bnb_available():
                 lora_dropout: float = 0.0,
                 **kwargs,
             ):
-                bnb.nn.Linear4bit.__init__(
-                    self,
-                    small_in_features,
-                    small_out_features,
-                    bias=kwargs.get("bias", True),
-                    compute_dtype=kwargs.get("compute_dtype", torch.float32),
-                    compress_statistics=kwargs.get("compress_statistics", True),
-                    quant_type=kwargs.get("quant_type", "nf4"),
+                super().__init__()
+                LLoraLayer.__init__(
+                    self, 
+                    small_in_features=base_layer.in_features, small_out_features=base_layer.out_features,
+                    large_in_features=large_in_features, large_out_features=large_out_features, 
                 )
-                LLoraLayer.__init__(self, large_in_features=large_in_features, large_out_features=large_out_features, 
-                           small_in_features=small_in_features, small_out_features=small_out_features)
 
-                # Freezing the pre-trained weight matrix
-                self.weight.requires_grad = False
-
+                self.base_layer = base_layer
                 init_lora_weights = kwargs.pop("init_lora_weights", True)
                 self.update_layer(adapter_name, small_r, large_r, lora_alpha, lora_dropout, init_lora_weights)
-                self.active_adapter = adapter_name
+                self.set_adapter(adapter_name)
 
-            def forward(self, x: torch.Tensor):
-                result = super().forward(x)
+            def forward(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
 
-                if self.disable_adapters or (self.active_adapter + "_small" not in self.lora_A.keys() and self.active_adapter + "_large" not in self.lora_A.keys()):
-                    return result
-                elif self.r[self.active_adapter + "_small"] > 0 and self.r[self.active_adapter + "_large"] > 0:
+                if self.disable_adapters:
+                    if self.merged:
+                        self.unmerge()
+                    result = self.base_layer.forward(x, *args, **kwargs)
+                elif self.merged:
+                    result = self.base_layer.forward(x, *args, **kwargs)
+                else:
+                    result = self.base_layer.forward(x, *args, **kwargs)
+                    # As per Tim Dettmers, for 4bit, we need to defensively clone here.
+                    # The reason is that in some cases, an error can occur that backprop
+                    # does not work on a manipulated view. This issue may be solved with
+                    # newer PyTorch versions but this would need extensive testing to be
+                    # sure.
                     result = result.clone()
-                    if not torch.is_autocast_enabled():
-                        expected_dtype = result.dtype
-                        x = x.to(self.lora_A[self.active_adapter + "_small"].weight.dtype)
-                        output = (
-                            self.lora_B[self.active_adapter + "_small"](
-                            self.lora_B[self.active_adapter + "_s2l"](
-                            self.lora_B[self.active_adapter + "_large"](
-                                self.lora_A[self.active_adapter + "_large"](
-                                self.lora_A[self.active_adapter + "_s2l"](
-                                self.lora_A[self.active_adapter + "_small"](self.lora_dropout[self.active_adapter](x))
-                                ))
-                            ))).to(expected_dtype)
-                            * self.scaling[self.active_adapter + "_large"] #TODO
-                        )
-                    else:
-                        output = (
-                            self.lora_B[self.active_adapter + "_small"](
-                            self.lora_B[self.active_adapter + "_s2l"](
-                            self.lora_B[self.active_adapter + "_large"](
-                                self.lora_A[self.active_adapter + "_large"](
-                                self.lora_A[self.active_adapter + "_s2l"](
-                                self.lora_A[self.active_adapter + "_small"](self.lora_dropout[self.active_adapter](x))
-                                ))
-                            )))
-                            * self.scaling[self.active_adapter + "_large"] #TODO
-                        )
-                    result += output
-                return result
 
+                    for active_adapter in self.active_adapters:
+                        if f'{active_adapter}_small' not in self.lora_A.keys():
+                            continue
+
+                        requires_conversion = not torch.is_autocast_enabled()
+                        if requires_conversion:
+                            expected_dtype = result.dtype
+                            x = x.to(self.lora_A[active_adapter + "_small"].weight.dtype)
+
+                        output = (
+                            self.lora_B[active_adapter + "_small"](
+                                self.lora_B[active_adapter + "_s2l"](
+                                    self.lora_B[active_adapter + "_large"](
+                                        self.lora_A[active_adapter + "_large"](
+                                            self.lora_A[active_adapter + "_s2l"](
+                                                self.lora_A[active_adapter + "_small"](
+                                                    self.lora_dropout[active_adapter](x)
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )  
+                        )
+
+                        if requires_conversion:
+                            output = output.to(expected_dtype)
+                        
+                        output = output * self.scaling[active_adapter + "_large"] #TODO
+                        result += output
+
+                        # LOG.debug(output)
+
+                return result
 
 class QuantLinear(torch.nn.Module, LLoraLayer):
     def __init__(
@@ -444,10 +494,10 @@ class QuantLinear(torch.nn.Module, LLoraLayer):
     #         torch.nn.init.xavier_uniform_(self.lora_A[adapter_name].weight)
     #         torch.nn.init.zeros_(self.lora_B[adapter_name].weight)
 
-
 class LLoraModel(LoraModel):
     def __init__(self, model, config, adapter_name) -> None:
         super().__init__(model, config, adapter_name)
+    
     def _create_and_replace(
         self,
         lora_config,
@@ -508,6 +558,10 @@ class LLoraModel(LoraModel):
             )
         else:
             new_module = self._create_new_module(lora_config, adapter_name, target, **kwargs)
+            # adapter_name + _small == self.active_adapter
+            # if adapter_name != self.active_adapter:
+            #     # adding an additional adapter: it is not automatically trainable
+            #     new_module.requires_grad_(False)
             self._replace_module(parent, target_name, new_module, target)
             
     @staticmethod
@@ -539,10 +593,10 @@ class LLoraModel(LoraModel):
                     "index": target.index,
                 }
             )
-            
             new_module = Linear8bitLt(
-                adapter_name, target.in_features, target.out_features, 
-                large_in_features=large_in_features, large_out_features=large_out_features, bias=bias, **eightbit_kwargs
+                adapter_name, target,
+                large_in_features=large_in_features, large_out_features=large_out_features, 
+                bias=bias, **eightbit_kwargs
             )
         elif loaded_in_4bit and is_bnb_4bit_available() and isinstance(target, bnb.nn.Linear4bit):
             fourbit_kwargs = kwargs.copy()
@@ -553,8 +607,11 @@ class LLoraModel(LoraModel):
                     "quant_type": target.weight.quant_type,
                 }
             )
-            new_module = Linear4bit(adapter_name, target.in_features, target.out_features, 
-                    large_in_features=large_in_features, large_out_features=large_out_features, bias=bias, **fourbit_kwargs)
+            new_module = Linear4bit(
+                adapter_name, target, 
+                large_in_features=large_in_features, large_out_features=large_out_features, 
+                bias=bias, **fourbit_kwargs
+            )
         elif AutoGPTQQuantLinear is not None and isinstance(target, AutoGPTQQuantLinear):
             new_module = QuantLinear(adapter_name, target, **kwargs)
             target.weight = target.qweight
@@ -562,8 +619,11 @@ class LLoraModel(LoraModel):
             embedding_kwargs = kwargs.copy()
             embedding_kwargs.pop("fan_in_fan_out", None)
             in_features, out_features = target.num_embeddings, target.embedding_dim
-            new_module = Embedding(adapter_name, in_features, out_features, 
-                    large_in_features=large_in_features, large_out_features=large_out_features, **embedding_kwargs)
+            new_module = Embedding(
+                adapter_name, in_features, out_features, 
+                large_in_features=large_in_features, large_out_features=large_out_features,
+                **embedding_kwargs
+            )
         elif isinstance(target, torch.nn.Conv2d):
             out_channels, in_channels = target.weight.size()[:2]
             kernel_size = target.weight.size()[2:]
@@ -596,8 +656,11 @@ class LLoraModel(LoraModel):
                     f"Target module {target} is not supported. Currently, only the following modules are supported: "
                     "`torch.nn.Linear`, `torch.nn.Embedding`, `torch.nn.Conv2d`, `transformers.pytorch_utils.Conv1D`."
                 )
-            new_module = Linear(adapter_name, in_features, out_features
-                    , large_in_features=large_in_features, large_out_features=large_out_features, bias=bias, **kwargs)
+            new_module = Linear(
+                adapter_name, in_features, out_features, 
+                large_in_features=large_in_features, large_out_features=large_out_features, 
+                bias=bias, **kwargs
+            )
 
         return new_module
     
@@ -612,6 +675,7 @@ class LLoraModel(LoraModel):
                 "Something went wrong, no active adapter could be found, please report the issue on GitHub"
             )
         return active_adapter
+    
     def set_adapter(self, adapter_name):
         for module in self.model.modules():
             if isinstance(module, LLoraLayer):

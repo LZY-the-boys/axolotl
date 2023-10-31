@@ -445,8 +445,10 @@ def load_model(
                     if hasattr(module, "weight"):
                         module.to(cfg.torch_dtype)
     # checkfor dytpe
-    LOG.info([ (n,p.dtype) for n,p in model.named_parameters() ])
     model, lora_config = load_adapter(model, cfg, cfg.adapter)
+
+    LOG.debug([ (n,p.dtype) for n,p in model.named_parameters() ])
+    LOG.debug([ n for n,p in model.named_parameters() if p.requires_grad ])
 
     if cfg.ddp and not load_in_8bit:
         model.to(f"cuda:{cfg.local_rank}")
@@ -580,7 +582,7 @@ def load_llora(model, cfg, inference=False):
     from peft.utils.peft_types import PeftType
     setattr(PeftType, "LLORA", "LLORA")
     from peft.peft_model import PEFT_TYPE_TO_MODEL_MAPPING
-    from axolotl.utils.llora import LLoraConfig, LLoraModel
+    from axolotl.models.llora.llora import LLoraConfig, LLoraModel
     PEFT_TYPE_TO_MODEL_MAPPING.update({PeftType.LLORA: LLoraModel})
     
     lora_target_modules = list(cfg.lora_target_modules or [])
@@ -613,10 +615,12 @@ def load_llora(model, cfg, inference=False):
         )
     else:
         model = get_peft_model(model, llora_config)
-    for k, v in model.named_parameters():
-        if 'small' in k or 's2l' in k:
-            v.requires_grad = False
-            print("freeze {}".format(k))
+
+    # for k, v in model.named_parameters():
+    #     if 'small' in k or 's2l' in k:
+    #         v.requires_grad = False
+    #         print("freeze {}".format(k))
+
     model.print_trainable_parameters()
 
     return model, llora_config

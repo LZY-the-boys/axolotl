@@ -20,6 +20,8 @@ class ColorfulFormatter(Formatter):
         "WARNING": Fore.YELLOW,
         "ERROR": Fore.RED,
         "CRITICAL": Fore.RED + Style.BRIGHT,
+        "INFO": Fore.GREEN,
+        "DEBUG": Fore.BLUE
     }
 
     def format(self, record):
@@ -34,6 +36,9 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
         "simple": {
             "format": "[%(asctime)s] [%(levelname)s] [%(name)s.%(funcName)s:%(lineno)d] [PID:%(process)d] %(message)s",
         },
+        "file_simple": {
+            "format": "%(asctime)s | %(levelname)s [%(name)s.%(funcName)s:%(lineno)d] %(message)s",
+        },
         "colorful": {
             "()": ColorfulFormatter,
             "format": "[%(asctime)s] [%(levelname)s] [%(name)s.%(funcName)s:%(lineno)d] [PID:%(process)d] [RANK:%(rank)d] %(message)s",
@@ -47,6 +52,11 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
             "filters": [],
             "stream": sys.stdout,
         },
+        "file": {
+            "class": "logging.FileHandler",
+            "formatter": "file_simple",  # Choose the appropriate formatter
+            "filename": os.getenv("LOG_FILE", "axolotl.log"),  # Specify the file path
+        },
         "color_console": {
             "class": "logging.StreamHandler",
             "formatter": "colorful",
@@ -54,11 +64,11 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
             "stream": sys.stdout,
         },
     },
-    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO")},
+    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO") },
     "loggers": {
         "axolotl": {
-            "handlers": ["color_console"],
-            "level": "DEBUG",
+            "handlers": ["color_console", "file"],
+            "level": os.getenv("LOG_LEVEL", "DEBUG") if int(os.getenv("LOCAL_RANK", "0")) in [-1,0] else "WARNING",
             "propagate": False,
         },
     },
