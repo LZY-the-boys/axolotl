@@ -493,6 +493,8 @@ def load_adapter(model, cfg, adapter, inference=False):
         return load_lora(model, cfg, inference=inference)
     if adapter == "llora":
         return load_llora(model, cfg, inference=inference)
+    if adapter in ["adalora"]:
+        return load_adalora(model, cfg, inference=inference)
     if adapter == "llama-adapter":
         return load_llama_adapter(model, cfg)
 
@@ -551,6 +553,44 @@ def load_lora(model, cfg, inference=False):
         lora_target_modules = list(set(lora_target_modules + linear_names))
 
     lora_config = LoraConfig(
+        r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        target_modules=lora_target_modules,
+        lora_dropout=cfg.lora_dropout,
+        fan_in_fan_out=cfg.lora_fan_in_fan_out,
+        modules_to_save=cfg.lora_modules_to_save if cfg.lora_modules_to_save else None,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    if cfg.lora_model_dir:
+        LOG.debug("Loading pretained PEFT - LoRA")
+        model = PeftModel.from_pretrained(
+            model,
+            cfg.lora_model_dir,
+            is_trainable=(not inference),
+        )
+    else:
+        model = get_peft_model(model, lora_config)
+
+    model.print_trainable_parameters()
+
+    return model, lora_config
+
+
+def load_adalora(model, cfg, inference=False):
+    # type: (PreTrainedModel, DictDefault, bool) -> Tuple[PreTrainedModel, Optional[PeftConfig]]
+
+    from peft import AdaLoraConfig, PeftModel, get_peft_model
+
+    lora_target_modules = list(cfg.lora_target_modules or [])
+
+    if cfg.lora_target_linear:
+        linear_names = find_all_linear_names(model)
+        LOG.info(f"found linear modules: {repr(linear_names)}")
+        lora_target_modules = list(set(lora_target_modules + linear_names))
+
+    lora_config = AdaLoraConfig(
         r=cfg.lora_r,
         lora_alpha=cfg.lora_alpha,
         target_modules=lora_target_modules,

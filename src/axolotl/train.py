@@ -38,6 +38,102 @@ class TrainDatasetMeta:
     total_num_steps: Optional[int] = None
 
 
+max_outliner = 0
+import warnings
+def debug_nan(model):
+
+    class nan_hook:
+        def __init__(self,name, module):
+            # module.__class__.__name__ 无法给出层数信息
+            self.name=name
+            module.register_forward_hook(self._hook)
+
+        def _hook(self, module, inp, output):
+            # 带lora的时候不准
+            # printf(self.name)
+            
+            if not isinstance(output, tuple):
+                outputs = [output]
+            else:
+                outputs = output
+
+            for i, out in enumerate(outputs):
+
+                if out is None:
+                    continue
+                if self.name == 'model':
+                    # dataclass
+                    continue
+                if isinstance(out, dict):
+                    # for k,v in out.__dict__.items():
+                    #     try:
+                    #         print(k, v.max())
+                    #     except:
+                    #         pass
+                    return
+                # else:
+                #     printf(out.max())
+                
+                nan_mask = torch.isnan(out)
+                if nan_mask.any():
+                    raise RuntimeError(f"Found NAN in {self.name} output {i} at indices: ", nan_mask.nonzero())
+                inf_mask = torch.isinf(out)
+                if inf_mask.any():
+                    raise RuntimeError(f"Found INF in {self.name} output {i} at indices: ", inf_mask.nonzero())
+                outliner = out.abs().max()
+                if outliner > 1000:
+                    # raise RuntimeError(f"Found outlier in {self.name} output {out_max}: ", out.argmax())
+                    # warnings.warn(f"Found outlier in {self.name} output {out_max}: {out.argmax()}" )
+                    global max_outliner
+                    max_outliner = max(max_outliner, outliner.item())
+
+            # torch.isinf(hidden_states).any()
+            # torch.isinf(hidden_states).nonzero()
+    
+    # for submodule in model.modules():
+    for name,submodule in model.named_modules():
+        nan_hook(name, submodule)
+
+def compute_loss(self, model, inputs, return_outputs=False):
+    """
+    How the loss is computed by Trainer. By default, all models return the loss in the first element.
+
+    Subclass and override for custom behavior.
+    """
+    if self.label_smoother is not None and "labels" in inputs:
+        labels = inputs.pop("labels")
+    else:
+        labels = None
+    outputs = model(**inputs)
+
+    if os.environ.get('DEBUG', False):
+        # shift_logits = logits[..., :-1, :].contiguous()
+        # shift_labels = labels[..., 1:].contiguous()
+        idxs = torch.where(inputs['labels'][0]!=-100)[0]
+        in_text = self.tokenizer.decode(inputs['labels'][0][idxs])
+        out_text = self.tokenizer.decode(torch.argmax(outputs['logits'],dim=-1)[0][idxs-1])
+        print('>>>in: ',in_text)
+        print('>>>out: ',out_text)
+    
+    # if torch.isnan(outputs.loss):
+    #     raise Exception('loss is nan')
+
+    if self.args.past_index >= 0:
+        self._past = outputs[self.args.past_index]
+    
+    if labels is not None:
+        loss = self.label_smoother(outputs, labels, shift_labels=True)
+    else:
+        if isinstance(outputs, dict) and "loss" not in outputs:
+            raise ValueError(
+                "The model did not return a loss from the inputs, only the following keys: "
+                f"{','.join(outputs.keys())}. For reference, the inputs it received are {','.join(inputs.keys())}."
+            )
+        # We don't use .loss here since the model may return tuples instead of ModelOutput.
+        loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+
+    return (loss, outputs) if return_outputs else loss
+
 def train(
     *,
     cfg: DictDefault,
@@ -110,6 +206,12 @@ def train(
     if cfg.group_by_length:
         LOG.info("hang tight... sorting dataset for group_by_length")
 
+    setattr(trainer.__class__, 'compute_loss', compute_loss)
+    trainer.tokenizer = tokenizer
+    # if os.environ.get('DEBUG', False):
+    #     debug_nan(model)
+
+    pretrain_hooks(cfg, trainer)
     if cfg.flash_optimum:
         with torch.backends.cuda.sdp_kernel(
             enable_flash=True, enable_math=True, enable_mem_efficient=True
@@ -117,6 +219,7 @@ def train(
             trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     else:
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    post_train_hooks(cfg, trainer)
 
     LOG.info(f"Training Completed!!! Saving pre-trained model to {cfg.output_dir}")
 
@@ -145,3 +248,14 @@ def train(
         trainer.create_model_card(model_name=cfg.output_dir.lstrip("./"))
 
     return model, tokenizer
+
+def pretrain_hooks(cfg, trainer):
+    if cfg.noisy_embedding_alpha:
+        from axolotl.monkeypatch import neft_embeddings
+        neft_embeddings.pretrain_hook(cfg, trainer)
+
+
+def post_train_hooks(cfg, trainer):
+    if cfg.noisy_embedding_alpha:
+        from axolotl.monkeypatch import neft_embeddings
+        neft_embeddings.post_train_hook(cfg, trainer)
