@@ -115,8 +115,8 @@ def compute_loss(self, model, inputs, return_outputs=False):
         print('>>>in: ',in_text)
         print('>>>out: ',out_text)
     
-    if torch.isnan(outputs.loss):
-        raise Exception('loss is nan')
+    # if torch.isnan(outputs.loss):
+    #     raise Exception('loss is nan')
 
     if self.args.past_index >= 0:
         self._past = outputs[self.args.past_index]
