@@ -56,5 +56,5 @@ if __name__ == "__main__":
         if type == bdb.BdbQuit:
             exit()
         print(type,value)
-        pdb.post_mortem(tb)
+        pdb.post_mmortem(tb)
     

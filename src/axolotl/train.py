@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-import transformers.modelcard
+import transformers
 from datasets import Dataset
 from optimum.bettertransformer import BetterTransformer
 
 from axolotl.common.cli import TrainerCliArgs
+import axolotl.pdb_extension
 from axolotl.logging_config import configure_logging
 from axolotl.utils.dict import DictDefault
 from axolotl.utils.models import load_model, load_tokenizer
@@ -106,17 +107,23 @@ def compute_loss(self, model, inputs, return_outputs=False):
         labels = None
     outputs = model(**inputs)
 
-    if os.environ.get('DEBUG', False):
+    if self.cfg.debug_gen:
         # shift_logits = logits[..., :-1, :].contiguous()
         # shift_labels = labels[..., 1:].contiguous()
         idxs = torch.where(inputs['labels'][0]!=-100)[0]
         in_text = self.tokenizer.decode(inputs['labels'][0][idxs])
         out_text = self.tokenizer.decode(torch.argmax(outputs['logits'],dim=-1)[0][idxs-1])
-        print('>>>in: ',in_text)
-        print('>>>out: ',out_text)
+        LOG.debug({"in": in_text})
+        LOG.debug({"out": out_text})
+
+    if self.cfg.debug_nan and 'llama' in self.cfg.base_model.lower():
+        LOG.debug(f"A : {model.base_model.model.model.layers[0].self_attn.q_proj.lora_A['default_small'].weight.abs().max()}")
+        LOG.debug(model.base_model.model.model.layers[0].self_attn.q_proj.lora_A['default_small'].weight)
+        LOG.debug(f"B : {model.base_model.model.model.layers[0].self_attn.q_proj.lora_B['default_small'].weight.abs().max()}")
+        LOG.debug(model.base_model.model.model.layers[0].self_attn.q_proj.lora_B['default_small'].weight)
     
-    # if torch.isnan(outputs.loss):
-    #     raise Exception('loss is nan')
+    if self.cfg.debug_nan and torch.isnan(outputs.loss):
+        raise Exception('loss is nan')
 
     if self.args.past_index >= 0:
         self._past = outputs[self.args.past_index]
@@ -133,6 +140,19 @@ def compute_loss(self, model, inputs, return_outputs=False):
         loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
     return (loss, outputs) if return_outputs else loss
+
+class CustomCallback(transformers.TrainerCallback):
+
+    def __init__(self, trainer):
+        self.logger = logging.getLogger("transformers.trainer")
+        self.trainer = trainer
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        if self.trainer.cfg.save_before_train:
+            self.trainer._save_checkpoint(self.trainer.model, trial=None)
+
+    def on_log(self, args, state, control, logs, **kwargs):
+        self.logger.info(logs)
 
 def train(
     *,
@@ -208,8 +228,10 @@ def train(
 
     setattr(trainer.__class__, 'compute_loss', compute_loss)
     trainer.tokenizer = tokenizer
-    # if os.environ.get('DEBUG', False):
-    #     debug_nan(model)
+    trainer.cfg = cfg
+    trainer.add_callback(CustomCallback(trainer))
+    if cfg.debug_nan:
+        debug_nan(model)
 
     pretrain_hooks(cfg, trainer)
     if cfg.flash_optimum:

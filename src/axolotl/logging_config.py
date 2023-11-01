@@ -9,7 +9,7 @@ from logging.config import dictConfig
 from typing import Any, Dict
 
 from colorama import Fore, Style, init
-
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 class ColorfulFormatter(Formatter):
     """
@@ -72,6 +72,12 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
             "level": os.getenv("LOG_LEVEL", "DEBUG") if int(os.getenv("LOCAL_RANK", "0")) in [-1,0] else "WARNING",
             "propagate": False,
         },
+        "transformers": {
+            # default is warning
+            "handlers": ["file"],
+            "level": os.getenv("LOG_LEVEL", "INFO") if int(os.getenv("LOCAL_RANK", "0")) in [-1,0] else "WARNING",
+            "propagate": False,   
+        }
     },
 }
 
