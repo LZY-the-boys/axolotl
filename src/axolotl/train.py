@@ -113,14 +113,18 @@ def compute_loss(self, model, inputs, return_outputs=False):
         idxs = torch.where(inputs['labels'][0]!=-100)[0]
         in_text = self.tokenizer.decode(inputs['labels'][0][idxs])
         out_text = self.tokenizer.decode(torch.argmax(outputs['logits'],dim=-1)[0][idxs-1])
-        LOG.debug({"in": in_text})
-        LOG.debug({"out": out_text})
+        LOG.debug({"in": in_text[:100]})
+        LOG.debug({"out": out_text[:100]})
 
     if self.cfg.debug_nan and 'llama' in self.cfg.base_model.lower():
-        LOG.debug(f"A : {model.base_model.model.model.layers[0].self_attn.q_proj.lora_A['default_small'].weight.abs().max()}")
-        LOG.debug(model.base_model.model.model.layers[0].self_attn.q_proj.lora_A['default_small'].weight)
-        LOG.debug(f"B : {model.base_model.model.model.layers[0].self_attn.q_proj.lora_B['default_small'].weight.abs().max()}")
-        LOG.debug(model.base_model.model.model.layers[0].self_attn.q_proj.lora_B['default_small'].weight)
+        if int(os.getenv('WORLD_SIZE',1)) > 1:
+            _model = model.module
+        else:
+            _model = model
+        LOG.debug(f"A : {_model.base_model.model.model.layers[0].self_attn.q_proj.lora_A['default_small'].weight.abs().max()}")
+        LOG.debug(_model.base_model.model.model.layers[0].self_attn.q_proj.lora_A['default_small'].weight)
+        LOG.debug(f"B : {_model.base_model.model.model.layers[0].self_attn.q_proj.lora_B['default_small'].weight.abs().max()}")
+        LOG.debug(_model.base_model.model.model.layers[0].self_attn.q_proj.lora_B['default_small'].weight)
     
     if self.cfg.debug_nan and torch.isnan(outputs.loss):
         raise Exception('loss is nan')
