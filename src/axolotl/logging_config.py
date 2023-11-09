@@ -29,6 +29,8 @@ class ColorfulFormatter(Formatter):
         log_message = super().format(record)
         return self.COLORS.get(record.levelname, "") + log_message + Fore.RESET
 
+if not os.getenv("LOG_FILE"):
+    raise Exception('>>> set the LOG_FILE')
 
 DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
     "version": 1,
