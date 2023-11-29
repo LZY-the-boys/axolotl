@@ -1,31 +1,59 @@
-
+#!/bin/bash
+# set -e pipefail
 source activate lla
-dir=/home/lzy/nips/data/exp-chat/three_class
-yaml_file="../examples/llama-2/qwen.yml" 
-# for file in "$dir"/*; do
-#     if [ -f "$file" ] ; then
-        file=/home/lzy/nips/data/platypus/bigbench-chat/chat4.json
+cd $home/axolotl/src
 
-        start_time=$(date +%s)
+function train() {
 
-        new_data=$file
-        name="${file##*/}"
-        name="${name%.json}"
-        echo "use $new_data, output in $name"  
+: ${CUDA_VISIBLE_DEVICES:=7}
 
-        WANDB_NAME=qwen-$name \
-        CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-        accelerate launch -m axolotl.cli.train $yaml_file \
-        --datasets "$file;sharegpt:chat" \
-        --output_dir ./outs/chat/three_class/qwen-$name \
-        --num_epochs 3 \
-        --trust_remote_code True 
+# $(echo "$input" | awk -F'[/;]' '{print $2}')
+echo ">>> train $data_path, "
+data_name=$(echo "$data_path" | cut -d';' -f1 | rev | cut -d'/' -f1 | rev | cut -d'.' -f1)
 
-        end_time=$(date +%s)
-        runtime=$((end_time - start_time))
-        runtime_minutes=$((runtime / 60))
+if [ "$size" -eq 7 ]; then
+    LLAMA=meta-llama/Llama-2-7b-hf
+elif [ "$size" -eq 13 ]; then
+    LLAMA=meta-llama/Llama-2-13b-hf
+elif [ "$size" -eq 70 ]; then
+    LLAMA=meta-llama/Llama-2-70b-hf
+else
+    echo "Invalid size: $size"
+    exit 1
+fi
+yaml_file="../examples/llama-2/qlora.yml"  
+outs=$OUT_ROOT/$(basename $LLAMA)
+echo ">>> output in $outs/llama-$data_name"
 
-        echo "$file:  sec: $runtime ;min: $runtime_minutes" >> time.txt
-    
-#     fi
-# done
+start_time=$(date +%s)
+
+CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
+LOG_FILE=$outs/llama-$data_name/log \
+accelerate launch --main_process_port $(shuf -i25000-30000 -n1) -m axolotl.cli.train $yaml_file \
+--datasets $data_path \
+--base_model $LLAMA \
+--base_model_config $LLAMA \
+--dataset_prepared_path $outs/.dataset_cache \
+--sequence_len 8192 \
+--micro_batch_size 1 \
+--output_dir $outs/llama-$data_name \
+--num_epochs 3 
+
+end_time=$(date +%s)
+runtime=$((end_time - start_time))
+runtime_minutes=$((runtime / 60))
+echo "$data_name:  sec: $runtime ;min: $runtime_minutes" >> time.txt
+
+}
+
+function train_dir() {
+    dir="$1"
+
+    for file in "$dir"/*; do
+        if [[ $file == *.json* ]]; then
+            train "$file"
+        fi
+    done
+}
+
+train "$@" || read

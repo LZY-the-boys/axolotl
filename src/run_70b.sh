@@ -9,12 +9,12 @@ yaml_file="../examples/llama-2/qlora.yml"
 
 : ${CUDA_VISIBLE_DEVICES:=7}
 
-data_name="$(basename $data_path .jsonl)"
-data_name="$(basename $data_name .json)"
+# $(echo "$input" | awk -F'[/;]' '{print $2}')
+echo ">>> train $data_path, "
+data_name=$(echo "$data_path" | cut -d';' -f1 | rev | cut -d'/' -f1 | rev | cut -d'.' -f1)
 
 outs=$OUT_ROOT/llama-70b/llama-$data_name
-
-echo ">>> train $data_path, output in $outs"
+echo ">>> output in $outs"
 
 start_time=$(date +%s)
 
