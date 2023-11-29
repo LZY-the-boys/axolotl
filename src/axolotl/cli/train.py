@@ -39,4 +39,13 @@ def do_cli(config: Path = Path("examples/"), **kwargs):
 
 
 if __name__ == "__main__":
-    fire.Fire(do_cli)
+    try:
+        fire.Fire(do_cli)
+    except:
+        import sys,pdb,bdb
+        type, value, tb = sys.exc_info()
+        if type == bdb.BdbQuit:
+            exit()
+        print(type,value)
+        pdb.post_mmortem(tb)
+    

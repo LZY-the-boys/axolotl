@@ -110,7 +110,9 @@ def _prepare_decoder_attention_mask(
         )
         attention_mask = attention_mask + sliding_window_mask
     else:
-        LOG.info("skipping sliding window mask, not broadcastable with attention mask")
+        # generate ?
+        # LOG.info("skipping sliding window mask, not broadcastable with attention mask")
+        pass
 
     return attention_mask
 

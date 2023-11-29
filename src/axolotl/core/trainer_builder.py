@@ -775,23 +775,29 @@ class HFRLTrainerBuilder(TrainerBuilderBase):
     def build(self, total_num_steps):
         training_args = TrainingArguments(
             per_device_train_batch_size=self.cfg.micro_batch_size,
+            per_device_eval_batch_size=self.cfg.micro_batch_size,
             max_steps=total_num_steps,
             remove_unused_columns=False,
             gradient_accumulation_steps=self.cfg.gradient_accumulation_steps,
             learning_rate=self.cfg.learning_rate,
             eval_steps=self.cfg.eval_steps,
             output_dir=self.cfg.output_dir,
-            warmup_steps=20,
+            ddp_find_unused_parameters=False, # important
+            # warmup_steps=20,
+            warmup_ratio=0.03,
             bf16=True,
             gradient_checkpointing=self.cfg.gradient_checkpointing,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
-            evaluation_strategy="steps",
+            gradient_checkpointing_kwargs={"use_reentrant": False},  # because ddp don't support gradient checkpointing. install trl from source 
+            evaluation_strategy="steps" if self.eval_dataset is not None else 'no',
             logging_first_step=True,
             logging_steps=1,
             optim="rmsprop",
             dataloader_num_workers=8,
             dataloader_pin_memory=True,
         )
+
+        # self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+
         dpo_trainer = DPOTrainer(
             self.model,
             self.model_ref,
@@ -804,7 +810,7 @@ class HFRLTrainerBuilder(TrainerBuilderBase):
             max_target_length=None,
             max_prompt_length=self.cfg.sequence_len,
             generate_during_eval=True,
-            loss_type="ipo",
+            # loss_type="ipo",
         )
 
         return dpo_trainer

@@ -419,7 +419,7 @@ def load_model(
         if cfg.gradient_checkpointing:
             model.gradient_checkpointing_enable()
         model = prepare_model_for_kbit_training(
-            model, use_gradient_checkpointing=cfg.gradient_checkpointing
+            model, use_gradient_checkpointing=cfg.gradient_checkpointing, gradient_checkpointing_kwargs={"use_reentrant":False},
         )
         needs_fa2_dtype = True
 

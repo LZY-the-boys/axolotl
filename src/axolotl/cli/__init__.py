@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Thread
 from typing import Any, Dict, List, Optional, Union
 
-import gradio as gr
+# import gradio as gr
 import torch
 import yaml
 
@@ -345,20 +345,29 @@ def load_rl_datasets(
     cfg: DictDefault,
     cli_args: TrainerCliArgs,
 ) -> TrainDatasetMeta:
-    train_dataset = load_dataset(
-        cfg.datasets[0]["path"], split=cfg.datasets[0]["split"]
-    )
-    eval_dataset = load_dataset(
-        cfg.test_datasets[0]["path"], split=cfg.test_datasets[0]["split"]
-    )
+
     def apply_chatml(sample):
         sample["prompt"] = f"<|im_start|>user\n{sample['prompt']}<|im_end|>\n<|im_start|>assistant\n"
         sample["chosen"] = f"{sample['chosen']}<|im_end|>"
         sample["rejected"] = f"{sample['rejected']}<|im_end|>"
         return sample
 
+    train_dataset = load_dataset(
+        cfg.datasets[0]["path"], split=cfg.datasets[0]["split"]
+    )[cfg.datasets[0]['train_on_split']]
     train_dataset = train_dataset.map(apply_chatml)
-    eval_dataset = eval_dataset.map(apply_chatml)
+    eval_dataset = None
+    if cfg.test_datasets is not None:
+        eval_dataset = load_dataset(
+            cfg.test_datasets[0]["path"], split=cfg.test_datasets[0]["split"]
+        )
+        eval_dataset = eval_dataset.map(apply_chatml)
+    elif 'eval_on_split' in cfg.datasets[0]:
+        eval_dataset = load_dataset(
+            cfg.datasets[0]["path"], split=cfg.datasets[0]["split"]
+        )[cfg.datasets[0]['eval_on_split']]
+        eval_dataset = eval_dataset.map(apply_chatml)
+    
     total_num_steps = int(
         math.ceil(
             len(train_dataset)

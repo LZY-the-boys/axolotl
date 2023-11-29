@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
+import axolotl.pdb_extension
 import torch
 import transformers.modelcard
 from accelerate.logging import get_logger
@@ -61,8 +61,8 @@ def train(
     LOG.debug(msg)
     model, peft_config = load_model(cfg, tokenizer, inference=cli_args.inference)
     model_ref = None
-    if cfg.rl:
-        # load the model again for model_ref/baseline
+    if cfg.rl and not cfg.adapter:
+        # lora don't need it
         model_ref, _ = load_model(cfg, tokenizer, inference=cli_args.inference)
 
     safe_serialization = cfg.save_safetensors is True
