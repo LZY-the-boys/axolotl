@@ -38,17 +38,21 @@ class TokenizedPromptDataset(Dataset):
     def process(self, dataset):
         features = dataset.features.keys()
         num_proc = min(64, os.cpu_count())
+        if os.getenv('DEBUG', False):
+            num_proc = 1
         map_kwargs = {}
         if self.prompt_tokenizer.supports_batched:
             map_kwargs["batched"] = True
             map_kwargs["batch_size"] = 100
-        return dataset.map(
+        dataset = dataset.map(
             self.prompt_tokenizer.tokenize_prompt,
             num_proc=num_proc,
             remove_columns=features,
             **map_kwargs,
         )
-
+        if os.getenv('DEBUG', False):
+            print(self.prompt_tokenizer.tokenizer.decode(dataset[0]['input_ids']))
+        return dataset
 
 # TODO this isn't the best since it can't interleave datasets
 class ConstantLengthDataset(IterableDataset):

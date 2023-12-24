@@ -115,6 +115,7 @@ def compute_loss(self, model, inputs, return_outputs=False):
         out_text = self.tokenizer.decode(torch.argmax(outputs['logits'],dim=-1)[0][idxs-1])
         LOG.debug({"in": in_text[:100]})
         LOG.debug({"out": out_text[:100]})
+        import pdb; pdb.set_trace()
 
     if self.cfg.debug_nan and 'llama' in self.cfg.base_model.lower():
         if int(os.getenv('WORLD_SIZE',1)) > 1:
