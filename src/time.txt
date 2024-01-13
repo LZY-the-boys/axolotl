@@ -61,3 +61,12 @@ v1221:  sec: 923 ;min: 15
 v1223:  sec: 1882 ;min: 31
 v1223:  sec: 234 ;min: 3
 v1223:  sec: 82118 ;min: 1368
+v1225:  sec: 36 ;min: 0
+v1225:  sec: 161 ;min: 2
+v1225:  sec: 70 ;min: 1
+v1225:  sec: 116 ;min: 1
+v1225:  sec: 91 ;min: 1
+v1225:  sec: 884 ;min: 14
+v1225:  sec: 537 ;min: 8
+v1225:  sec: 2790 ;min: 46
+v1226:  sec: 106321 ;min: 1772

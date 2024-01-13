@@ -12,6 +12,7 @@ import torch
 import transformers
 from datasets import Dataset
 from optimum.bettertransformer import BetterTransformer
+from transformers.deepspeed import is_deepspeed_zero3_enabled
 
 from axolotl.common.cli import TrainerCliArgs
 import axolotl.pdb_extension
@@ -174,7 +175,10 @@ def train(
     total_num_steps = dataset_meta.total_num_steps
 
     # Load the model and tokenizer
-    LOG.info("loading model and (optionally) peft_config...")
+    msg = "loading model"
+    if cfg.adapter:
+        msg += " and peft_config..."
+    LOG.info(msg)
     model, peft_config = load_model(cfg, tokenizer, inference=cli_args.inference)
 
     safe_serialization = cfg.save_safetensors is True
@@ -198,7 +202,8 @@ def train(
         cfg, train_dataset, eval_dataset, model, tokenizer, total_num_steps
     )
 
-    model.config.use_cache = False
+    if hasattr(model, "config"):
+        model.config.use_cache = False
 
     # go ahead and presave, so we have the adapter config available to inspect
     if peft_config:
@@ -208,15 +213,16 @@ def train(
     if not Path(cfg.output_dir).is_dir():
         os.makedirs(cfg.output_dir, exist_ok=True)
     tokenizer.save_pretrained(str(Path(cfg.output_dir)))
-    model.config.save_pretrained(str(Path(cfg.output_dir)))
+    if hasattr(model, "config"):
+        model.config.save_pretrained(str(Path(cfg.output_dir)))
 
     # In case we want to stop early with ctrl+c, this is a nice to have to save the pretrained model
     if cfg.local_rank == 0:
 
         def terminate_handler(_, __, model):
-            # if cfg.flash_optimum:
-            #     model = BetterTransformer.reverse(model)
-            # model.save_pretrained(cfg.output_dir, safe_serialization=safe_serialization)
+            if cfg.flash_optimum:
+                model = BetterTransformer.reverse(model)
+            model.save_pretrained(cfg.output_dir, safe_serialization=safe_serialization)
             sys.exit(0)
 
         signal.signal(
@@ -250,6 +256,11 @@ def train(
 
     LOG.info(f"Training Completed!!! Saving pre-trained model to {cfg.output_dir}")
 
+    # post training
+    for name, module in model.named_modules():
+        if hasattr(module, "_post_training"):
+            module._post_training(model, name) 
+
     if trainer.is_fsdp_enabled:
         trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
         LOG.info("Set FSDP state dict type to FULL_STATE_DICT for saving.")
@@ -265,6 +276,22 @@ def train(
     # only save on rank 0, otherwise it corrupts output on multi-GPU when multiple processes attempt to write the same file
     if cfg.fsdp:
         trainer.save_model(cfg.output_dir)
+    elif cfg.deepspeed and is_deepspeed_zero3_enabled():
+        # Copied over from: https://github.com/huggingface/accelerate/blob/5ae611118057232f441055f7ef9ba0b0f2b8d533/docs/source/usage_guides/deepspeed.md#saving-and-loading
+        trainer.accelerator.wait_for_everyone()
+        unwrapped_model = trainer.accelerator.unwrap_model(trainer.model_wrapped)
+
+        # Saves the whole/unpartitioned fp16 model when in ZeRO Stage-3 to the output directory if
+        # `stage3_gather_16bit_weights_on_model_save` is True in DeepSpeed Config file or
+        # `zero3_save_16bit_model` is True in DeepSpeed Plugin.
+        # For Zero Stages 1 and 2, models are saved as usual in the output directory.
+        # The model name saved is `pytorch_model.bin`
+        unwrapped_model.save_pretrained(
+            cfg.output_dir,
+            is_main_process=trainer.accelerator.is_main_process,
+            save_function=trainer.accelerator.save,
+            state_dict=trainer.accelerator.get_state_dict(trainer.model_wrapped),
+        )
     elif cfg.local_rank == 0:
         if cfg.flash_optimum:
             model = BetterTransformer.reverse(model)
