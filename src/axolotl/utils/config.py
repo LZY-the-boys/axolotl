@@ -304,13 +304,13 @@ def validate_config(cfg):
         # hack 
         if isinstance(cfg.datasets, str):
             from axolotl.utils.dict import DictDefault
-            if ';' in cfg.datasets:
-                data_path = cfg.datasets.split(';')[0]
-                data_type = cfg.datasets.split(';')[1]
-            else:
-                data_path = cfg.datasets
-                data_type = 'alpaca'
-            cfg.datasets = [DictDefault({'path':data_path, 'type':data_type })]
+            if '=' in cfg.datasets:
+                pairs = cfg.datasets.split(',')
+                json_dict = {}
+                for pair in pairs:
+                    key, value = pair.split('=')
+                    json_dict[key] = value
+                cfg.datasets = [DictDefault(**json_dict)]
         
         for idx, ds_cfg in enumerate(cfg.datasets):
             if not ds_cfg.type:
