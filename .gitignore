@@ -3,6 +3,10 @@ configs
 outs
 *.sh
 submit
+last_run_prepared/
+.vscode
+_site/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -132,6 +136,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+venv3.10/
 
 # Spyder project settings
 .spyderproject
@@ -168,3 +173,10 @@ cython_debug/
 # wandb creates a folder to store logs for training runs
 wandb
 last_run_prepared
+
+# Runs
+lora-out/*
+qlora-out/*
+mlruns/*
+
+/.quarto/

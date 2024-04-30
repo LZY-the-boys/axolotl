@@ -1,32 +1,41 @@
 """Prepare and train a model on a dataset. Can also infer from a model or merge lora"""
 
-import logging
 import os
 import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import torch
-import transformers
+import transformers.modelcard
+from accelerate import Accelerator
+from accelerate.logging import get_logger
 from datasets import Dataset
-from optimum.bettertransformer import BetterTransformer
-from transformers.deepspeed import is_deepspeed_zero3_enabled
+from peft import PeftModel
+from pkg_resources import get_distribution  # type: ignore
+from transformers import PreTrainedModel, PreTrainedTokenizer
+from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 
 from axolotl.common.cli import TrainerCliArgs
 import axolotl.pdb_extension
 from axolotl.logging_config import configure_logging
 from axolotl.utils.dict import DictDefault
+from axolotl.utils.freeze import freeze_layers_except
 from axolotl.utils.models import load_model, load_tokenizer
 from axolotl.utils.trainer import setup_trainer
+
+try:
+    from optimum.bettertransformer import BetterTransformer
+except ImportError:
+    BetterTransformer = None
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 src_dir = os.path.join(project_root, "src")
 sys.path.insert(0, src_dir)
 
 configure_logging()
-LOG = logging.getLogger("axolotl.train")
+LOG = get_logger("axolotl.train")
 
 
 @dataclass
@@ -161,27 +170,18 @@ class CustomCallback(transformers.TrainerCallback):
         self.logger.info(logs)
 
 def train(
-    *,
-    cfg: DictDefault,
-    cli_args: TrainerCliArgs,
-    dataset_meta: TrainDatasetMeta,
-):
+    *, cfg: DictDefault, cli_args: TrainerCliArgs, dataset_meta: TrainDatasetMeta
+) -> Tuple[Union[PeftModel, PreTrainedModel], PreTrainedTokenizer]:
     # load the tokenizer first
-    LOG.info(f"loading tokenizer... {cfg.tokenizer_config or cfg.base_model_config}")
+    LOG.debug(
+        f"loading tokenizer... {cfg.tokenizer_config or cfg.base_model_config}",
+        main_process_only=True,
+    )
     tokenizer = load_tokenizer(cfg)
 
     train_dataset = dataset_meta.train_dataset
     eval_dataset = dataset_meta.eval_dataset
     total_num_steps = dataset_meta.total_num_steps
-
-    # Load the model and tokenizer
-    msg = "loading model"
-    if cfg.adapter:
-        msg += " and peft_config..."
-    LOG.info(msg)
-    model, peft_config = load_model(cfg, tokenizer, inference=cli_args.inference)
-
-    safe_serialization = cfg.save_safetensors is True
 
     if cfg.resume_from_checkpoint is None and cfg.auto_resume_from_checkpoints:
         possible_checkpoints = [
@@ -198,12 +198,41 @@ def train(
             )
     resume_from_checkpoint = cfg.resume_from_checkpoint
 
-    trainer = setup_trainer(
-        cfg, train_dataset, eval_dataset, model, tokenizer, total_num_steps
-    )
+    # Load the model and tokenizer
+    msg = "loading model"
+    if cfg.adapter:
+        msg += " and peft_config..."
+    LOG.debug(msg)
+    # we wait unitl the last possible moment to setup Accelerator
+    Accelerator()
+    model, peft_config = load_model(cfg, tokenizer, inference=cli_args.inference)
+    model.generation_config.do_sample = True
 
-    if hasattr(model, "config"):
-        model.config.use_cache = False
+    model_ref = None
+    if cfg.rl and cfg.rl != "orpo":
+        if cfg.adapter and not cfg.rl_adapter_ref_model:
+            # use built-in trl autounwrap
+            LOG.debug("Passing model_ref: None to RL trainer")
+            model_ref = None  # explicit setting to None
+        else:
+            # load the model again for model_ref/baseline
+            model_ref, _ = load_model(
+                cfg, tokenizer, inference=cli_args.inference, reference_model=True
+            )
+
+    safe_serialization = cfg.save_safetensors is True
+
+    if cfg.unfrozen_parameters:
+        freeze_layers_except(model, cfg.unfrozen_parameters)
+
+    trainer = setup_trainer(
+        cfg,
+        train_dataset,
+        eval_dataset,
+        (model, model_ref, peft_config),
+        tokenizer,
+        total_num_steps,
+    )
 
     # go ahead and presave, so we have the adapter config available to inspect
     if peft_config:
@@ -220,7 +249,7 @@ def train(
     if cfg.local_rank == 0:
 
         def terminate_handler(_, __, model):
-            if cfg.flash_optimum:
+            if cfg.flash_optimum and BetterTransformer:
                 model = BetterTransformer.reverse(model)
             model.save_pretrained(cfg.output_dir, safe_serialization=safe_serialization)
             sys.exit(0)
@@ -233,21 +262,31 @@ def train(
     badge_markdown = """[<img src="https://raw.githubusercontent.com/OpenAccess-AI-Collective/axolotl/main/image/axolotl-badge-web.png" alt="Built with Axolotl" width="200" height="32"/>](https://github.com/OpenAccess-AI-Collective/axolotl)"""
     transformers.modelcard.AUTOGENERATED_TRAINER_COMMENT += f"\n{badge_markdown}"
 
+    if getattr(cfg, "axolotl_config_path"):
+        raw_axolotl_cfg = Path(cfg.axolotl_config_path)
+        version = get_distribution("axolotl").version
+        if raw_axolotl_cfg.is_file():
+            transformers.modelcard.AUTOGENERATED_TRAINER_COMMENT += f"\n<details><summary>See axolotl config</summary>\n\naxolotl version: `{version}`\n```yaml\n{raw_axolotl_cfg.read_text(encoding='utf-8')}\n```\n\n</details><br>\n"
+
     LOG.info("Starting trainer...")
     if cfg.group_by_length:
         LOG.info("hang tight... sorting dataset for group_by_length")
 
-    setattr(trainer.__class__, 'compute_loss', compute_loss)
-    trainer.tokenizer = tokenizer
-    trainer.cfg = cfg
-    trainer.add_callback(CustomCallback(trainer))
-    if cfg.debug_nan:
-        debug_nan(model)
+    # setattr(trainer.__class__, 'compute_loss', compute_loss)
+    # trainer.tokenizer = tokenizer
+    # trainer.cfg = cfg
+    # trainer.add_callback(CustomCallback(trainer))
+    # if cfg.debug_nan:
+    #     debug_nan(model)
 
-    pretrain_hooks(cfg, trainer)
+
+
     if cfg.flash_optimum:
         with torch.backends.cuda.sdp_kernel(
-            enable_flash=True, enable_math=True, enable_mem_efficient=True
+            # TODO configure these from the YAML w/ sdp_kernel_kwargs: ...
+            enable_flash=True,
+            enable_math=True,
+            enable_mem_efficient=True,
         ):
             trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     else:
@@ -259,7 +298,7 @@ def train(
     # post training
     for name, module in model.named_modules():
         if hasattr(module, "_post_training"):
-            module._post_training(model, name) 
+            module._post_training(model, name)  # pylint: disable=protected-access
 
     if trainer.is_fsdp_enabled:
         trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
@@ -293,23 +332,36 @@ def train(
             state_dict=trainer.accelerator.get_state_dict(trainer.model_wrapped),
         )
     elif cfg.local_rank == 0:
-        if cfg.flash_optimum:
+        if cfg.flash_optimum and BetterTransformer:
             model = BetterTransformer.reverse(model)
 
         model.save_pretrained(cfg.output_dir, safe_serialization=safe_serialization)
 
     if not cfg.hub_model_id:
-        trainer.create_model_card(model_name=cfg.output_dir.lstrip("./"))
+        try:
+            trainer.create_model_card(model_name=cfg.output_dir.lstrip("./"))
+        except AttributeError:
+            pass
+    elif cfg.hub_model_id:
+        # defensively push to the hub to ensure the model card is updated
+        trainer.push_to_hub()
 
     return model, tokenizer
 
-def pretrain_hooks(cfg, trainer):
-    if cfg.noisy_embedding_alpha:
-        from axolotl.monkeypatch import neft_embeddings
-        neft_embeddings.pretrain_hook(cfg, trainer)
+
+def pretrain_hooks(_cfg, _trainer):
+    """
+    Run hooks right before kicking off the training
+    :param cfg:
+    :param trainer:
+    :return:
+    """
 
 
-def post_train_hooks(cfg, trainer):
-    if cfg.noisy_embedding_alpha:
-        from axolotl.monkeypatch import neft_embeddings
-        neft_embeddings.post_train_hook(cfg, trainer)
+def post_train_hooks(_cfg, _trainer):
+    """
+    Run hooks right after training completes
+    :param cfg:
+    :param trainer:
+    :return:
+    """

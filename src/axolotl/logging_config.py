@@ -34,6 +34,7 @@ if not os.getenv("LOG_FILE"):
 
 DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
     "version": 1,
+    "disable_existing_loggers": False,
     "formatters": {
         "simple": {
             "format": "[%(asctime)s] [%(levelname)s] [%(name)s.%(funcName)s:%(lineno)d] [PID:%(process)d] %(message)s",

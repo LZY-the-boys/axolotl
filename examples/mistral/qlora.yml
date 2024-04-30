@@ -1,8 +1,6 @@
 base_model: mistralai/Mistral-7B-v0.1
-base_model_config: mistralai/Mistral-7B-v0.1
 model_type: MistralForCausalLM
 tokenizer_type: LlamaTokenizer
-is_mistral_derived_model: true
 
 load_in_8bit: false
 load_in_4bit: true
@@ -39,7 +37,7 @@ lora_target_modules:
 wandb_project: nips-effiency
 wandb_entity:
 wandb_watch:
-wandb_run_id:
+wandb_name:
 wandb_log_model:
 
 gradient_accumulation_steps: 4
@@ -51,8 +49,8 @@ learning_rate: 0.0002
 
 train_on_inputs: false
 group_by_length: false
-bf16: true
-fp16: false
+bf16: auto
+fp16:
 tf32: false
 
 gradient_checkpointing: true
@@ -74,6 +72,3 @@ weight_decay: 0.0
 fsdp:
 fsdp_config:
 special_tokens:
-  bos_token: "<s>"
-  eos_token: "</s>"
-  unk_token: "<unk>"
