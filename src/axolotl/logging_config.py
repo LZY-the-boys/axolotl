@@ -30,7 +30,7 @@ class ColorfulFormatter(Formatter):
         return self.COLORS.get(record.levelname, "") + log_message + Fore.RESET
 
 if not os.getenv("LOG_FILE"):
-    raise Exception('>>> set the LOG_FILE')
+    print('>>> the LOG_FILE unset, default to axolotl.log')
 
 DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
     "version": 1,
@@ -88,6 +88,8 @@ DEFAULT_LOGGING_CONFIG: Dict[str, Any] = {
 def configure_logging():
     """Configure with default logging"""
     if os.getenv("LOG_FILE", False):
-        os.makedirs(os.path.dirname(os.getenv("LOG_FILE")), exist_ok=True)
+        dir = os.path.dirname(os.getenv("LOG_FILE"))
+        if dir !='':  
+            os.makedirs(dir, exist_ok=True)
     init()  # Initialize colorama
     dictConfig(DEFAULT_LOGGING_CONFIG)

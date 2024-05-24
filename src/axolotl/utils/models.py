@@ -618,14 +618,15 @@ def load_model(
                 base_model,
                 **model_kwargs,
             )
-        elif model_type == 'qwen':
+        elif cfg.base_model in ['Qwen/Qwen-14B','Qwen/Qwen-7B','Qwen/Qwen-72B']:
             from axolotl.models.qwen.qwen_hijack import QWenLMHeadModel
             model = QWenLMHeadModel.from_pretrained(
                 base_model,
-                load_in_8bit=cfg.load_in_8bit and cfg.adapter is not None,
-                load_in_4bit=cfg.load_in_4bit and cfg.adapter is not None,
+                # load_in_8bit=cfg.load_in_8bit and cfg.adapter is not None,
+                # load_in_4bit=cfg.load_in_4bit and cfg.adapter is not None,
                 **model_kwargs,
             )
+            LOG.warning(' >>> use hijack Qwen')
         elif model_type and not cfg.trust_remote_code:
             if cfg.gptq:
                 model = AutoModelForCausalLM.from_pretrained(
@@ -793,12 +794,13 @@ def load_model(
                 if hasattr(module, "weight"):
                     module.to(cfg.torch_dtype)
 
-    # if 'qwen' == cfg.model_type:
-    #     if "ln_1" in name or 'ln_2' in name or 'ln_f' in name:
-    #         module.to(cfg.torch_dtype)
-    #     if "lm_head" in name or "wte" in name:
-    #         if hasattr(module, "weight"):
-    #             module.to(cfg.torch_dtype)                
+    if cfg.base_model in ['Qwen/Qwen-14B','Qwen/Qwen-7B','Qwen/Qwen-72B']:
+        for name, module in model.named_modules():
+            if "ln_1" in name or 'ln_2' in name or 'ln_f' in name:
+                module.to(cfg.torch_dtype)
+            if "lm_head" in name or "wte" in name:
+                if hasattr(module, "weight"):
+                    module.to(cfg.torch_dtype)                
     # else:
     #     if "norm" in name:
     #         module.to(cfg.torch_dtype)

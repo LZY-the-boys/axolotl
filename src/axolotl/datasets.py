@@ -52,6 +52,18 @@ class TokenizedPromptDataset(Dataset):
         if self.prompt_tokenizer.supports_batched:
             map_kwargs["batched"] = True
             map_kwargs["batch_size"] = 100
+        
+        if os.getenv('DEBUGDATA', False):
+            import pdb; pdb.set_trace()
+            # from collections import defaultdict
+            # cnt = defaultdict(int)
+            # for d in dataset:
+            #     if d['conversations'][0]['from'] == 'system':
+            #         cnt[d['conversations'][0]['value']] += 1
+            
+            # print({k[:25]: v for k, v in cnt.items()})
+            # print(self.prompt_tokenizer.tokenizer.decode(dataset[0]['input_ids']))
+
         dataset = dataset.map(
             self.prompt_tokenizer.tokenize_prompt,
             num_proc=num_proc,
@@ -60,8 +72,13 @@ class TokenizedPromptDataset(Dataset):
             desc="Tokenizing Prompts",
             **map_kwargs,
         )
-        if os.getenv('DEBUG', False):
+
+        if os.getenv('DEBUGDATA', False):
             print(self.prompt_tokenizer.tokenizer.decode(dataset[0]['input_ids']))
+            for i in range(min(3, len(dataset))):
+                LOG.debug({'item':self.prompt_tokenizer.tokenizer.decode(dataset[0]['input_ids'])})
+            import pdb; pdb.set_trace()
+
         return dataset
 
 # TODO this isn't the best since it can't interleave datasets

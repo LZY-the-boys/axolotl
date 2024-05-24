@@ -1,4 +1,4 @@
-base_model: Qwen/Qwen-7B
+base_model: Qwen/Qwen1.5-14B
 model_type: AutoModelForCausalLM
 tokenizer_type: AutoTokenizer
 
@@ -9,15 +9,23 @@ load_in_4bit: true
 strict: false
 
 datasets:
-  - path: mhenrichsen/alpaca_2k_test
-    type: alpaca
+  - path: /data/data/final_set_cleaned/train/
+    type: sharegpt
+    conversation: chatml
+    shards: 20
+  - path: /data/data/map_coig_cqia.jsonl
+    type: sharegpt
+    conversation: chatml
+  - path: /data/data/ruozhiba.jsonl
+    type: sharegpt
+    conversation: chatml
 dataset_prepared_path:
-val_set_size: 0.05
-output_dir: ./lora-out
+val_set_size: 0 # 一定要写
+output_dir: /data/qwen1.5/lora-out
 
-sequence_len: 2048  # supports up to 8192
-sample_packing: false
-pad_to_sequence_len:
+sequence_len: 8192  # supports up to 8192
+sample_packing: true
+pad_to_sequence_len: true
 
 adapter: qlora
 lora_model_dir:
@@ -27,16 +35,16 @@ lora_dropout: 0.05
 lora_target_linear: true
 lora_fan_in_fan_out:
 
-wandb_project:
+wandb_project: FFT
 wandb_entity:
 wandb_watch:
-wandb_name:
+wandb_name: qwen1_5_qlora
 wandb_log_model:
 
 gradient_accumulation_steps: 4
-micro_batch_size: 2
+micro_batch_size: 1
 num_epochs: 4
-optimizer: adamw_bnb_8bit
+optimizer: paged_adamw_32bit
 lr_scheduler: cosine
 learning_rate: 0.0002
 
@@ -46,7 +54,7 @@ bf16: auto
 fp16:
 tf32: false
 
-gradient_checkpointing: false
+gradient_checkpointing: true
 early_stopping_patience:
 resume_from_checkpoint:
 local_rank:
@@ -54,14 +62,17 @@ logging_steps: 1
 xformers_attention:
 flash_attention:
 
-warmup_steps: 10
-evals_per_epoch: 4
+# warmup_steps: 10
+warmup_ratio: 0.05
+evals_per_epoch:
 eval_table_size:
-eval_max_new_tokens: 128
-saves_per_epoch: 1
+eval_max_new_tokens:
+saves_per_epoch: 4
 debug:
 deepspeed:
 weight_decay: 0.0
 fsdp:
 fsdp_config:
 special_tokens:
+default_system_message: "You are a helpful assistant."
+# You are called CCIIP-GPT. You are created by the CCIIP Lab at Hua Zhong University of Science and Technology, based on Alibaba Tongyi's pretrained Qwen model. Your birthday is April 30th, 2024, and Your knowledge base was last updated in January 2024. You only mentions this information when relevant to the user's query.

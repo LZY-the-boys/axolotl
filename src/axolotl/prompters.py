@@ -348,7 +348,13 @@ class ShareGPTPrompter(Prompter):  # pylint: disable=too-few-public-methods
                 )
 
             if len(conv.messages) > 0 and ((role == conv.messages[-1][0])):
-                LOG.warning(f"{SHAREGPT_ASSERTION_FAILED_ROLE}: {sentence}")
+                LOG.warning(f"{SHAREGPT_ASSERTION_FAILED_ROLE}: ")
+                LOG.info({
+                    's1': conv.messages[-1][1][:45],
+                    's2': sentence["value"][:45]
+                })
+                conv.messages[-1][1]+= sentence["value"]
+                continue
 
             conv.append_message(role, sentence["value"])
 

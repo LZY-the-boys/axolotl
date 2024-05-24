@@ -7,8 +7,16 @@ load_in_4bit: true
 strict: false
 
 datasets:
-  - path: aaditya/alpaca_subset_1
-    type: alpaca
+  - path: /data/data/final_set_cleaned/train/
+    type: sharegpt
+    conversation: chatml
+    shards: 20
+  - path: /data/data/map_coig_cqia.jsonl
+    type: sharegpt
+    conversation: chatml
+  - path: /data/data/ruozhiba.jsonl
+    type: sharegpt
+    conversation: chatml
 dataset_prepared_path:
 val_set_size: 0
 output_dir: ./qlora-out
@@ -27,14 +35,14 @@ lora_target_modules:
 lora_target_linear: true
 lora_fan_in_fan_out:
 
-wandb_project:
+wandb_project: FFT
 wandb_entity:
 wandb_watch:
-wandb_name:
+wandb_name: llama3_qlora
 wandb_log_model:
 
 gradient_accumulation_steps: 4
-micro_batch_size: 2
+micro_batch_size: 1
 num_epochs: 4
 optimizer: paged_adamw_32bit
 lr_scheduler: cosine
@@ -55,7 +63,7 @@ xformers_attention:
 flash_attention: true
 
 warmup_steps: 10
-evals_per_epoch: 4
+evals_per_epoch:
 eval_table_size:
 saves_per_epoch: 1
 debug:
