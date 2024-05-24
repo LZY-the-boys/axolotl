@@ -1,0 +1,72 @@
+base_model: Qwen/Qwen1.5-14B
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+
+trust_remote_code: true
+
+load_in_8bit: false
+load_in_4bit: true
+strict: false
+
+datasets:
+  - path: /data/data/mixture.jsonl
+    type: alpaca
+dataset_prepared_path: last_run_prepared
+val_set_size: 0
+output_dir: /data/qwen1.5/lora-out
+
+sequence_len: 8192  # supports up to 8192
+sample_packing: true
+pad_to_sequence_len: true
+
+adapter: qlora
+lora_model_dir:
+lora_r: 32
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target_linear: true
+lora_fan_in_fan_out:
+
+wandb_project: FFT
+wandb_entity:
+wandb_watch:
+wandb_name: qwen1_5-qlora-mixture
+wandb_log_model:
+
+gradient_accumulation_steps: 4
+micro_batch_size: 1
+num_epochs: 4
+optimizer: paged_adamw_32bit
+lr_scheduler: cosine
+learning_rate: 2e-5
+
+train_on_inputs: false
+group_by_length: false
+bf16: auto
+fp16:
+tf32: false
+
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+early_stopping_patience:
+resume_from_checkpoint:
+local_rank:
+logging_steps: 1
+xformers_attention:
+flash_attention:
+
+
+warmup_steps: 100
+evals_per_epoch: 0
+eval_table_size:
+saves_per_epoch: 1
+save_total_limit: 8
+debug:
+deepspeed: /home/LeiFeng/lzy/axolotl/src/deepspeed/zero2.json
+weight_decay: 0.0
+fsdp:
+fsdp_config:
+special_tokens:
+default_system_message: "You are a helpful assistant."
+# You are called CCIIP-GPT. You are created by the CCIIP Lab at Hua Zhong University of Science and Technology, based on Alibaba Tongyi's pretrained Qwen model. Your birthday is April 30th, 2024, and Your knowledge base was last updated in January 2024. You only mentions this information when relevant to the user's query.
